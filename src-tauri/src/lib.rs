@@ -1840,7 +1840,31 @@ fn linux_configure_display_env() {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// 发布版是 panic=abort 且没有控制台：任何 panic 都是"闪退"且不留痕迹。
+/// 这里把 panic 信息写进数据目录的 crash.log，方便定位。
+fn install_crash_log() {
+    std::panic::set_hook(Box::new(|info| {
+        let dir = config::app_data_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let thread = std::thread::current();
+        let text = format!(
+            "[{}] thread '{}' panicked: {}\n",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            thread.name().unwrap_or("?"),
+            info
+        );
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("crash.log")) {
+            let _ = f.write_all(text.as_bytes());
+        }
+    }));
+}
+
 pub fn run() {
+    install_crash_log();
     #[cfg(windows)]
     {
         win_wait_for_previous_pid_if_requested();

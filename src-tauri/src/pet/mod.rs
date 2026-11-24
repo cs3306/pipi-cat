@@ -37,6 +37,7 @@ pub fn apply_overrides(list: &mut [crate::cats::CatSkinConfig]) {
 pub use overrides::{ignored as overrides_ignored, set_ignore as set_overrides_ignored};
 
 /// 与 build.rs 里的 `PET_COMMANDS` 必须一致（见下方测试）。
+#[allow(dead_code)]
 pub const COMMANDS: &[&str] = &[
     "pet_get_settings",
     "pet_update_settings",

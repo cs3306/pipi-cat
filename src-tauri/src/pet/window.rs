@@ -4,14 +4,31 @@
 
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
+/// 诊断日志：追加写入数据目录的 pipi-cat.log。窗口卡死/消失时用来看走到了哪一步。
+pub fn trace(msg: &str) {
+    use std::io::Write;
+    let dir = crate::config::app_data_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("pipi-cat.log")) {
+        let _ = writeln!(f, "[{t}] {msg}");
+    }
+}
+
 async fn open_named(app: AppHandle, label: &str, page: &str, title: &str, size: (f64, f64), min: (f64, f64)) -> Result<(), String> {
+    trace(&format!("open {label}: start"));
     if let Some(w) = app.get_webview_window(label) {
+        trace(&format!("open {label}: reuse existing window"));
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
         return Ok(());
     }
-    WebviewWindowBuilder::new(&app, label, WebviewUrl::App(page.into()))
+    trace(&format!("open {label}: building {page}"));
+    let built = WebviewWindowBuilder::new(&app, label, WebviewUrl::App(page.into()))
         .title(title)
         .inner_size(size.0, size.1)
         .min_inner_size(min.0, min.1)
@@ -20,9 +37,23 @@ async fn open_named(app: AppHandle, label: &str, page: &str, title: &str, size: 
         // Windows 上默认的原生拖放处理会吞掉网页里的拖放事件；关掉后「拖入文件」才能工作。
         .disable_drag_drop_handler()
         .center()
-        .build()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+        .build();
+    match built {
+        Ok(w) => {
+            trace(&format!("open {label}: build returned ok"));
+            let name = label.to_string();
+            w.on_window_event(move |ev| match ev {
+                tauri::WindowEvent::CloseRequested { .. } => trace(&format!("{name}: CloseRequested")),
+                tauri::WindowEvent::Destroyed => trace(&format!("{name}: Destroyed")),
+                _ => {}
+            });
+            Ok(())
+        }
+        Err(e) => {
+            trace(&format!("open {label}: build failed: {e}"));
+            Err(e.to_string())
+        }
+    }
 }
 
 pub async fn open_settings_window(app: AppHandle) -> Result<(), String> {
