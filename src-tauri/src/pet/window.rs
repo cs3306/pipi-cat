@@ -18,6 +18,39 @@ pub fn trace(msg: &str) {
     }
 }
 
+/// 与猫窗口（tauri.conf.json）完全一致的浏览器参数。
+/// WebView2 要求「同一个用户数据目录」下的窗口环境参数一致，否则新窗口会报 0x8007139F。
+const MAIN_BROWSER_ARGS: &str = "--autoplay-policy=no-user-gesture-required";
+
+fn build_window(
+    app: &AppHandle,
+    label: &str,
+    page: &str,
+    title: &str,
+    size: (f64, f64),
+    min: (f64, f64),
+    transparent: bool,
+    args: Option<&str>,
+) -> tauri::Result<tauri::WebviewWindow> {
+    let mut b = WebviewWindowBuilder::new(app, label, WebviewUrl::App(page.into()))
+        .title(title)
+        .inner_size(size.0, size.1)
+        .min_inner_size(min.0, min.1)
+        .resizable(true)
+        .decorations(true)
+        .transparent(transparent)
+        // Windows 上默认的原生拖放处理会吞掉网页里的拖放事件；关掉后「拖入文件」才能工作。
+        .disable_drag_drop_handler()
+        .center();
+    #[cfg(windows)]
+    if let Some(a) = args {
+        b = b.additional_browser_args(a);
+    }
+    #[cfg(not(windows))]
+    let _ = args;
+    b.build()
+}
+
 async fn open_named(app: AppHandle, label: &str, page: &str, title: &str, size: (f64, f64), min: (f64, f64)) -> Result<(), String> {
     trace(&format!("open {label}: start"));
     if let Some(w) = app.get_webview_window(label) {
@@ -27,33 +60,34 @@ async fn open_named(app: AppHandle, label: &str, page: &str, title: &str, size: 
         let _ = w.set_focus();
         return Ok(());
     }
-    trace(&format!("open {label}: building {page}"));
-    let built = WebviewWindowBuilder::new(&app, label, WebviewUrl::App(page.into()))
-        .title(title)
-        .inner_size(size.0, size.1)
-        .min_inner_size(min.0, min.1)
-        .resizable(true)
-        .decorations(true)
-        // Windows 上默认的原生拖放处理会吞掉网页里的拖放事件；关掉后「拖入文件」才能工作。
-        .disable_drag_drop_handler()
-        .center()
-        .build();
-    match built {
-        Ok(w) => {
-            trace(&format!("open {label}: build returned ok"));
-            let name = label.to_string();
-            w.on_window_event(move |ev| match ev {
-                tauri::WindowEvent::CloseRequested { .. } => trace(&format!("{name}: CloseRequested")),
-                tauri::WindowEvent::Destroyed => trace(&format!("{name}: Destroyed")),
-                _ => {}
-            });
-            Ok(())
-        }
-        Err(e) => {
-            trace(&format!("open {label}: build failed: {e}"));
-            Err(e.to_string())
+    // 依次尝试几种环境参数组合；第一种与猫窗口完全一致，最可能成功。每次结果都写进日志。
+    let attempts: [(bool, Option<&str>); 4] = [
+        (true, Some(MAIN_BROWSER_ARGS)),
+        (true, None),
+        (false, Some(MAIN_BROWSER_ARGS)),
+        (false, None),
+    ];
+    let mut last_err = String::new();
+    for (i, (transparent, args)) in attempts.iter().enumerate() {
+        trace(&format!("open {label}: attempt {} (transparent={transparent}, args={})", i + 1, args.is_some()));
+        match build_window(&app, label, page, title, size, min, *transparent, *args) {
+            Ok(w) => {
+                trace(&format!("open {label}: attempt {} ok", i + 1));
+                let name = label.to_string();
+                w.on_window_event(move |ev| match ev {
+                    tauri::WindowEvent::CloseRequested { .. } => trace(&format!("{name}: CloseRequested")),
+                    tauri::WindowEvent::Destroyed => trace(&format!("{name}: Destroyed")),
+                    _ => {}
+                });
+                return Ok(());
+            }
+            Err(e) => {
+                trace(&format!("open {label}: attempt {} failed: {e}", i + 1));
+                last_err = e.to_string();
+            }
         }
     }
+    Err(last_err)
 }
 
 pub async fn open_settings_window(app: AppHandle) -> Result<(), String> {
