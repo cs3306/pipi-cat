@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -39,7 +40,7 @@ test('rejects missing license, bad id, missing idle and unknown kind', () => {
 });
 
 test('example palette skin in docs builds', () => {
-  const p = buildPack(new URL('../docs/skins/examples/sunny-palette/', import.meta.url).pathname);
+  const p = buildPack(fileURLToPath(new URL('../docs/skins/examples/sunny-palette/', import.meta.url)));
   assert.equal(p.kind, 'palette');
   assert.equal(p.palette.furColor, '#f2c14e');
 });
