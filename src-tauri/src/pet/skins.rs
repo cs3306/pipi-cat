@@ -264,7 +264,8 @@ fn check_rig(rig_json: Option<&Value>) -> (Vec<String>, Vec<(String, Vec<u8>)>) 
 
 struct Checked {
     pack: Pack,
-    /// 已解码并校验通过的图片字节（仅图片皮肤）
+    /// 已解码并校验通过的图片字节（仅图片皮肤）。目前只用于校验，不再读取。
+    #[allow(dead_code)]
     images: Vec<(String, Vec<u8>)>,
 }
 
@@ -272,11 +273,13 @@ fn check(text: &str) -> Result<Checked, Vec<String>> {
     if text.len() > MAX_LAYERED_BYTES {
         return Err(vec!["pack-too-large".into()]);
     }
-    let pack: Pack = serde_json::from_str(text).map_err(|e| vec![format!("invalid-json:{e}")])?;
-    let mut errs = Vec::new();
-    if pack.kind != "layered" && text.len() > MAX_PACK_BYTES {
+    let parsed = serde_json::from_str::<Pack>(text);
+    // 超过普通皮肤上限的，只有「能解析且是分层皮肤」才放行；其余（包括根本不是 JSON 的）一律报太大。
+    if text.len() > MAX_PACK_BYTES && !matches!(&parsed, Ok(p) if p.kind == "layered") {
         return Err(vec!["pack-too-large".into()]);
     }
+    let pack: Pack = parsed.map_err(|e| vec![format!("invalid-json:{e}")])?;
+    let mut errs = Vec::new();
 
     let mut images: Vec<(String, Vec<u8>)> = Vec::new();
     if let Some(map) = &pack.sprites {
