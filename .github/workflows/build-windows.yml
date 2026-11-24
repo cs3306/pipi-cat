@@ -46,7 +46,7 @@ jobs:
 
       - name: Rust unit tests (pet plugin module)
         working-directory: src-tauri
-        run: cargo test --lib pet::
+        run: 'cargo test --lib pet::'
 
       - name: Build installer (NSIS)
         run: npm run tauri -- build --bundles nsis
