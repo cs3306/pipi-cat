@@ -142,6 +142,98 @@ pub fn describe_windows(app: &tauri::AppHandle) {
     }
 }
 
+
+/// 看门狗：每秒让主线程回一次话；超过 3 秒没回应就写日志，恢复后再写一条。
+/// 窗口"卡死"时，日志里能看到主线程从什么时候开始、卡了多久。
+pub fn start_watchdog(app: tauri::AppHandle) {
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+    let _ = std::thread::Builder::new().name("watchdog".into()).spawn(move || {
+        let mut stalls = 0u32;
+        loop {
+            std::thread::sleep(Duration::from_secs(1));
+            let (tx, rx) = mpsc::channel::<()>();
+            let sent = Instant::now();
+            if app.run_on_main_thread(move || drop(tx.send(()))).is_err() {
+                return; // 应用正在退出
+            }
+            if rx.recv_timeout(Duration::from_secs(3)).is_ok() {
+                continue;
+            }
+            stalls += 1;
+            write("WARN", "watchdog", &format!("main thread not responding for >3s (stall #{stalls})"));
+            let mut logged = 3u64;
+            loop {
+                match rx.recv_timeout(Duration::from_secs(5)) {
+                    Ok(()) => {
+                        write("WARN", "watchdog", &format!("main thread recovered after {:.1}s", sent.elapsed().as_secs_f32()));
+                        break;
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        logged += 5;
+                        if logged <= 63 {
+                            write("WARN", "watchdog", &format!("main thread still not responding after {logged}s"));
+                        }
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+            if stalls >= 20 {
+                return;
+            }
+        }
+    });
+}
+
+/// Windows：捕获原生崩溃（访问冲突等），崩溃前把异常代码和地址写进日志。
+/// Rust 的 panic 钩子管不到这类崩溃（例如 WebView2 / COM 里出错）。
+#[cfg(windows)]
+pub fn install_native_crash_logger() {
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    struct ExceptionRecord {
+        code: u32,
+        flags: u32,
+        record: *mut ExceptionRecord,
+        address: *mut c_void,
+        num_params: u32,
+        params: [usize; 15],
+    }
+    #[repr(C)]
+    struct ExceptionPointers {
+        record: *mut ExceptionRecord,
+        context: *mut c_void,
+    }
+    type Filter = unsafe extern "system" fn(*const ExceptionPointers) -> i32;
+    extern "system" {
+        fn SetUnhandledExceptionFilter(filter: Option<Filter>) -> Option<Filter>;
+    }
+    unsafe extern "system" fn handler(p: *const ExceptionPointers) -> i32 {
+        if !p.is_null() {
+            let r = (*p).record;
+            if !r.is_null() {
+                let r = &*r;
+                write(
+                    "FATAL",
+                    "native-crash",
+                    &format!(
+                        "unhandled exception code=0x{:08X} address={:p} params=[0x{:x}, 0x{:x}]",
+                        r.code, r.address, r.params[0], r.params[1]
+                    ),
+                );
+            }
+        }
+        0 // EXCEPTION_CONTINUE_SEARCH：交还给系统，照常崩溃/报告
+    }
+    unsafe {
+        SetUnhandledExceptionFilter(Some(handler));
+    }
+}
+
+#[cfg(not(windows))]
+pub fn install_native_crash_logger() {}
+
 #[cfg(test)]
 mod tests {
     use super::civil_from_days;

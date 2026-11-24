@@ -1,0 +1,234 @@
+diff --git a/src-tauri/src/applog.rs b/src-tauri/src/applog.rs
+index 3ede329..884e68a 100644
+--- a/src-tauri/src/applog.rs
++++ b/src-tauri/src/applog.rs
+@@ -142,6 +142,98 @@ pub fn describe_windows(app: &tauri::AppHandle) {
+     }
+ }
+ 
++
++/// 看门狗：每秒让主线程回一次话；超过 3 秒没回应就写日志，恢复后再写一条。
++/// 窗口"卡死"时，日志里能看到主线程从什么时候开始、卡了多久。
++pub fn start_watchdog(app: tauri::AppHandle) {
++    use std::sync::mpsc;
++    use std::time::{Duration, Instant};
++    let _ = std::thread::Builder::new().name("watchdog".into()).spawn(move || {
++        let mut stalls = 0u32;
++        loop {
++            std::thread::sleep(Duration::from_secs(1));
++            let (tx, rx) = mpsc::channel::<()>();
++            let sent = Instant::now();
++            if app.run_on_main_thread(move || drop(tx.send(()))).is_err() {
++                return; // 应用正在退出
++            }
++            if rx.recv_timeout(Duration::from_secs(3)).is_ok() {
++                continue;
++            }
++            stalls += 1;
++            write("WARN", "watchdog", &format!("main thread not responding for >3s (stall #{stalls})"));
++            let mut logged = 3u64;
++            loop {
++                match rx.recv_timeout(Duration::from_secs(5)) {
++                    Ok(()) => {
++                        write("WARN", "watchdog", &format!("main thread recovered after {:.1}s", sent.elapsed().as_secs_f32()));
++                        break;
++                    }
++                    Err(mpsc::RecvTimeoutError::Timeout) => {
++                        logged += 5;
++                        if logged <= 63 {
++                            write("WARN", "watchdog", &format!("main thread still not responding after {logged}s"));
++                        }
++                    }
++                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
++                }
++            }
++            if stalls >= 20 {
++                return;
++            }
++        }
++    });
++}
++
++/// Windows：捕获原生崩溃（访问冲突等），崩溃前把异常代码和地址写进日志。
++/// Rust 的 panic 钩子管不到这类崩溃（例如 WebView2 / COM 里出错）。
++#[cfg(windows)]
++pub fn install_native_crash_logger() {
++    use std::ffi::c_void;
++
++    #[repr(C)]
++    struct ExceptionRecord {
++        code: u32,
++        flags: u32,
++        record: *mut ExceptionRecord,
++        address: *mut c_void,
++        num_params: u32,
++        params: [usize; 15],
++    }
++    #[repr(C)]
++    struct ExceptionPointers {
++        record: *mut ExceptionRecord,
++        context: *mut c_void,
++    }
++    type Filter = unsafe extern "system" fn(*const ExceptionPointers) -> i32;
++    extern "system" {
++        fn SetUnhandledExceptionFilter(filter: Option<Filter>) -> Option<Filter>;
++    }
++    unsafe extern "system" fn handler(p: *const ExceptionPointers) -> i32 {
++        if !p.is_null() {
++            let r = (*p).record;
++            if !r.is_null() {
++                let r = &*r;
++                write(
++                    "FATAL",
++                    "native-crash",
++                    &format!(
++                        "unhandled exception code=0x{:08X} address={:p} params=[0x{:x}, 0x{:x}]",
++                        r.code, r.address, r.params[0], r.params[1]
++                    ),
++                );
++            }
++        }
++        0 // EXCEPTION_CONTINUE_SEARCH：交还给系统，照常崩溃/报告
++    }
++    unsafe {
++        SetUnhandledExceptionFilter(Some(handler));
++    }
++}
++
++#[cfg(not(windows))]
++pub fn install_native_crash_logger() {}
++
+ #[cfg(test)]
+ mod tests {
+     use super::civil_from_days;
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index f1e4f0e..c1b4154 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -1346,6 +1346,9 @@ fn start_hit_test_loop(
+         loop {
+             std::thread::sleep(Duration::from_millis(25));
+ 
++            if pet::building_window() {
++                continue;
++            }
+             if paused_guard.load(Ordering::Relaxed) {
+                 continue;
+             }
+@@ -1873,6 +1876,7 @@ fn linux_configure_display_env() {
+ #[cfg_attr(mobile, tauri::mobile_entry_point)]
+ pub fn run() {
+     applog::install_panic_hook();
++    applog::install_native_crash_logger();
+     applog::banner();
+     #[cfg(windows)]
+     {
+@@ -1921,6 +1925,7 @@ pub fn run() {
+             let handle = app.handle().clone();
+             applog::info("boot", "setup: start");
+             applog::describe_windows(&handle);
++            applog::start_watchdog(handle.clone());
+             let s = settings_for_setup.lock().unwrap().clone();
+ 
+             #[cfg(target_os = "macos")]
+diff --git a/src-tauri/src/pet/mod.rs b/src-tauri/src/pet/mod.rs
+index 503b4c0..1039fdd 100644
+--- a/src-tauri/src/pet/mod.rs
++++ b/src-tauri/src/pet/mod.rs
+@@ -27,7 +27,7 @@ use std::time::Duration;
+ use tauri::plugin::{Builder, TauriPlugin};
+ use tauri::{AppHandle, Wry};
+ 
+-pub use window::open_settings_window;
++pub use window::{building_window, open_settings_window};
+ 
+ /// 给 cats.rs 用：把默认皮肤的覆盖叠加到内置猫上。
+ pub fn apply_overrides(list: &mut [crate::cats::CatSkinConfig]) {
+diff --git a/src-tauri/src/pet/window.rs b/src-tauri/src/pet/window.rs
+index c9e2782..c3f858c 100644
+--- a/src-tauri/src/pet/window.rs
++++ b/src-tauri/src/pet/window.rs
+@@ -2,6 +2,9 @@
+ //! 猫窗口只有 420×440 且平时穿透、不抢焦点，放不下这些界面也无法正常输入。
+ //! 用 async：Windows 上在同步命令里创建 WebView 窗口可能死锁（Tauri 已知问题）。
+ 
++use std::sync::atomic::{AtomicBool, Ordering};
++use std::sync::Arc;
++use std::time::{Duration, Instant};
+ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+ 
+ /// 诊断日志（统一写进 pipi-cat.log，见 applog.rs）。
+@@ -9,6 +12,29 @@ pub fn trace(msg: &str) {
+     crate::applog::info("window", msg);
+ }
+ 
++/// 正在创建新窗口。创建 WebView2 窗口时主线程要泵消息，此时猫窗口的鼠标轮询线程
++/// 如果还在每 25ms 跨线程操作主窗口，有卡死的嫌疑；所以创建期间让它暂停。
++static BUILDING: AtomicBool = AtomicBool::new(false);
++
++pub fn building_window() -> bool {
++    BUILDING.load(Ordering::Relaxed)
++}
++
++struct BuildGuard;
++
++impl BuildGuard {
++    fn new() -> Self {
++        BUILDING.store(true, Ordering::Relaxed);
++        BuildGuard
++    }
++}
++
++impl Drop for BuildGuard {
++    fn drop(&mut self) {
++        BUILDING.store(false, Ordering::Relaxed);
++    }
++}
++
+ /// 与猫窗口（tauri.conf.json）完全一致的浏览器参数。
+ /// WebView2 要求「同一个用户数据目录」下的窗口环境参数一致，否则新窗口会报 0x8007139F。
+ const MAIN_BROWSER_ARGS: &str = "--autoplay-policy=no-user-gesture-required";
+@@ -51,6 +77,25 @@ async fn open_named(app: AppHandle, label: &str, page: &str, title: &str, size:
+         let _ = w.set_focus();
+         return Ok(());
+     }
++    let _building = BuildGuard::new();
++    // 看门狗：创建迟迟不返回时把情况写进日志（卡死时没有任何别的线索）。
++    let done = Arc::new(AtomicBool::new(false));
++    {
++        let done = done.clone();
++        let name = label.to_string();
++        std::thread::spawn(move || {
++            let mut waited = 0u64;
++            for step in [3u64, 7, 10] {
++                std::thread::sleep(Duration::from_secs(step));
++                waited += step;
++                if done.load(Ordering::Relaxed) {
++                    return;
++                }
++                crate::applog::warn("window", &format!("open {name}: build() still pending after {waited}s"));
++            }
++        });
++    }
++    let started = Instant::now();
+     // 依次尝试几种环境参数组合；第一种与猫窗口完全一致，最可能成功。每次结果都写进日志。
+     let attempts: [(bool, Option<&str>); 4] = [
+         (true, Some(MAIN_BROWSER_ARGS)),
+@@ -63,7 +108,8 @@ async fn open_named(app: AppHandle, label: &str, page: &str, title: &str, size:
+         trace(&format!("open {label}: attempt {} (transparent={transparent}, args={})", i + 1, args.is_some()));
+         match build_window(&app, label, page, title, size, min, *transparent, *args) {
+             Ok(w) => {
+-                trace(&format!("open {label}: attempt {} ok", i + 1));
++                done.store(true, Ordering::Relaxed);
++                trace(&format!("open {label}: attempt {} ok after {}ms", i + 1, started.elapsed().as_millis()));
+                 let name = label.to_string();
+                 w.on_window_event(move |ev| match ev {
+                     tauri::WindowEvent::CloseRequested { .. } => trace(&format!("{name}: CloseRequested")),
+@@ -78,6 +124,7 @@ async fn open_named(app: AppHandle, label: &str, page: &str, title: &str, size:
+             }
+         }
+     }
++    done.store(true, Ordering::Relaxed);
+     Err(last_err)
+ }
+ 

@@ -27,7 +27,7 @@ use std::time::Duration;
 use tauri::plugin::{Builder, TauriPlugin};
 use tauri::{AppHandle, Wry};
 
-pub use window::open_settings_window;
+pub use window::{building_window, open_settings_window};
 
 /// 给 cats.rs 用：把默认皮肤的覆盖叠加到内置猫上。
 pub fn apply_overrides(list: &mut [crate::cats::CatSkinConfig]) {

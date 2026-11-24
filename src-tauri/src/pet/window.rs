@@ -2,11 +2,37 @@
 //! 猫窗口只有 420×440 且平时穿透、不抢焦点，放不下这些界面也无法正常输入。
 //! 用 async：Windows 上在同步命令里创建 WebView 窗口可能死锁（Tauri 已知问题）。
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// 诊断日志（统一写进 pipi-cat.log，见 applog.rs）。
 pub fn trace(msg: &str) {
     crate::applog::info("window", msg);
+}
+
+/// 正在创建新窗口。创建 WebView2 窗口时主线程要泵消息，此时猫窗口的鼠标轮询线程
+/// 如果还在每 25ms 跨线程操作主窗口，有卡死的嫌疑；所以创建期间让它暂停。
+static BUILDING: AtomicBool = AtomicBool::new(false);
+
+pub fn building_window() -> bool {
+    BUILDING.load(Ordering::Relaxed)
+}
+
+struct BuildGuard;
+
+impl BuildGuard {
+    fn new() -> Self {
+        BUILDING.store(true, Ordering::Relaxed);
+        BuildGuard
+    }
+}
+
+impl Drop for BuildGuard {
+    fn drop(&mut self) {
+        BUILDING.store(false, Ordering::Relaxed);
+    }
 }
 
 /// 与猫窗口（tauri.conf.json）完全一致的浏览器参数。
@@ -51,6 +77,25 @@ async fn open_named(app: AppHandle, label: &str, page: &str, title: &str, size: 
         let _ = w.set_focus();
         return Ok(());
     }
+    let _building = BuildGuard::new();
+    // 看门狗：创建迟迟不返回时把情况写进日志（卡死时没有任何别的线索）。
+    let done = Arc::new(AtomicBool::new(false));
+    {
+        let done = done.clone();
+        let name = label.to_string();
+        std::thread::spawn(move || {
+            let mut waited = 0u64;
+            for step in [3u64, 7, 10] {
+                std::thread::sleep(Duration::from_secs(step));
+                waited += step;
+                if done.load(Ordering::Relaxed) {
+                    return;
+                }
+                crate::applog::warn("window", &format!("open {name}: build() still pending after {waited}s"));
+            }
+        });
+    }
+    let started = Instant::now();
     // 依次尝试几种环境参数组合；第一种与猫窗口完全一致，最可能成功。每次结果都写进日志。
     let attempts: [(bool, Option<&str>); 4] = [
         (true, Some(MAIN_BROWSER_ARGS)),
@@ -63,7 +108,8 @@ async fn open_named(app: AppHandle, label: &str, page: &str, title: &str, size: 
         trace(&format!("open {label}: attempt {} (transparent={transparent}, args={})", i + 1, args.is_some()));
         match build_window(&app, label, page, title, size, min, *transparent, *args) {
             Ok(w) => {
-                trace(&format!("open {label}: attempt {} ok", i + 1));
+                done.store(true, Ordering::Relaxed);
+                trace(&format!("open {label}: attempt {} ok after {}ms", i + 1, started.elapsed().as_millis()));
                 let name = label.to_string();
                 w.on_window_event(move |ev| match ev {
                     tauri::WindowEvent::CloseRequested { .. } => trace(&format!("{name}: CloseRequested")),
@@ -78,6 +124,7 @@ async fn open_named(app: AppHandle, label: &str, page: &str, title: &str, size: 
             }
         }
     }
+    done.store(true, Ordering::Relaxed);
     Err(last_err)
 }
 

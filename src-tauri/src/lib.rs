@@ -1346,6 +1346,9 @@ fn start_hit_test_loop(
         loop {
             std::thread::sleep(Duration::from_millis(25));
 
+            if pet::building_window() {
+                continue;
+            }
             if paused_guard.load(Ordering::Relaxed) {
                 continue;
             }
@@ -1873,6 +1876,7 @@ fn linux_configure_display_env() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     applog::install_panic_hook();
+    applog::install_native_crash_logger();
     applog::banner();
     #[cfg(windows)]
     {
@@ -1921,6 +1925,7 @@ pub fn run() {
             let handle = app.handle().clone();
             applog::info("boot", "setup: start");
             applog::describe_windows(&handle);
+            applog::start_watchdog(handle.clone());
             let s = settings_for_setup.lock().unwrap().clone();
 
             #[cfg(target_os = "macos")]
