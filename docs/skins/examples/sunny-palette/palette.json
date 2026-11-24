@@ -1,0 +1,10 @@
+{
+  "furColor": "#f2c14e",
+  "outlineColor": "#7a5a12",
+  "eyeColorTop": "#2e8b57",
+  "noseColor": "#e58a8a",
+  "accentColor": "#f08a24",
+  "spots": [
+    { "part": "head", "x": 0, "y": -0.6, "rx": 0.18, "ry": 0.12, "color": "#fff7e0", "opacity": 0.9 }
+  ]
+}

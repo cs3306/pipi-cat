@@ -1,0 +1,79 @@
+name: Build Windows (beta)
+
+# 手动触发，或推送 v* 标签时构建。只做 Windows 10/11 安装包（NSIS）。
+# 标签构建会创建一个「草稿」Release，附带安装包与 SHA256 校验值，由你检查后再发布。
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript type check
+        run: npm run typecheck
+
+      - name: TypeScript unit tests
+        run: npm test
+
+      - name: Rust unit tests (pure logic crate)
+        run: cargo test --manifest-path src-tauri/pet-core/Cargo.toml
+
+      - name: Rust unit tests (pet plugin module)
+        working-directory: src-tauri
+        run: cargo test --lib pet::
+
+      - name: Build installer (NSIS)
+        run: npm run tauri -- build --bundles nsis
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          $dir = "src-tauri/target/release/bundle/nsis"
+          Get-ChildItem "$dir/*-setup.exe" | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$h  $($_.Name)" | Out-File -Encoding ascii "$($_.FullName).sha256"
+          }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/nsis/*-setup.exe.sha256
+
+      - name: Draft release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          prerelease: ${{ contains(github.ref_name, 'beta') }}
+          files: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/nsis/*-setup.exe.sha256

@@ -1,0 +1,9 @@
+[package]
+name = "pet-core"
+version = "0.1.0"
+edition = "2021"
+description = "Pure, dependency-free gameplay logic for the desktop pet (focus, tasks, economy, quiet hours)."
+publish = false
+
+# 刻意不依赖任何第三方 crate：可在任何平台 `cargo test`，也不会引入额外许可证。
+[dependencies]

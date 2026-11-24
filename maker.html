@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Skin Maker</title>
+    <style>
+      :root { color-scheme: light dark; font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; font-size: 14px; }
+      * { box-sizing: border-box; }
+      body { margin: 0; display: flex; height: 100vh; }
+      #form { flex: 1; padding: 14px 20px; overflow: auto; min-width: 0; }
+      #side { width: 450px; flex: none; border-left: 1px solid #8884; padding: 10px; display: flex; flex-direction: column; align-items: center; gap: 10px; overflow: auto; }
+      #preview { width: 420px; height: 440px; background: repeating-conic-gradient(#8882 0% 25%, transparent 0% 50%) 0 0 / 20px 20px; border-radius: 10px; flex: none; }
+      h1 { font-size: 18px; margin: 0 0 6px; }
+      h2 { font-size: 14px; margin: 16px 0 6px; }
+      p.desc { margin: 0 0 10px; opacity: .72; line-height: 1.5; }
+      .row { display: flex; align-items: center; gap: 10px; margin: 6px 0; flex-wrap: wrap; }
+      .row > label { min-width: 120px; }
+      input, select, button, textarea { font: inherit; }
+      input[type=text], input[type=password], select { min-width: 220px; }
+      textarea { width: 100%; min-height: 70px; }
+      input[type=color] { width: 44px; height: 26px; padding: 0; border: 1px solid #8886; background: none; }
+      button.btn { padding: 5px 14px; border-radius: 6px; border: 1px solid #8886; background: #7a7aff33; color: inherit; cursor: pointer; }
+      button.btn:disabled { opacity: .45; cursor: default; }
+      .card { border: 1px solid #8884; border-radius: 10px; padding: 10px 14px; margin: 10px 0; }
+      .card.warn { border-color: #d9a400; background: #d9a40014; }
+      .errs { color: #d33; margin: 6px 0; line-height: 1.5; }
+      .slot { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+      .slot img { width: 48px; height: 48px; object-fit: contain; background: repeating-conic-gradient(#8882 0% 25%, transparent 0% 50%) 0 0 / 10px 10px; border-radius: 6px; }
+      .toast { position: fixed; right: 16px; bottom: 12px; padding: 6px 12px; border-radius: 8px; background: #2b6e3fcc; color: #fff; opacity: 0; transition: opacity .2s; pointer-events: none; }
+      .toast.show { opacity: 1; }
+      .toast.err { background: #a33; }
+      .muted { opacity: .6; }
+      details { margin: 12px 0; }
+      summary { cursor: pointer; opacity: .85; }
+    </style>
+  </head>
+  <body>
+    <div id="form"></div>
+    <div id="side">
+      <canvas id="preview"></canvas>
+      <div id="actions" style="width:100%"></div>
+    </div>
+    <div id="toast" class="toast"></div>
+    <script type="module" src="/src/makerMain.ts"></script>
+  </body>
+</html>
