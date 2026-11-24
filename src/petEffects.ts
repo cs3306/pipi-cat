@@ -246,32 +246,36 @@ export class PetEffects {
     ctx.save();
     ctx.globalAlpha = fadeIn;
 
-    // 围裙：梯形胸兜 + 颈部带子
+    // 围裙：梯形胸兜 + 颈部带子（尺寸随 K 放大；原来固定 ±24/±44 像素，套在较宽的猫身上显得太小）
+    const K = 1.5;
+    const halfTop = 24 * K;
+    const halfBot = 44 * K;
+    const apronBotY = botY + 14;
     ctx.fillStyle = this.apron;
     ctx.strokeStyle = 'rgba(0,0,0,0.28)';
     ctx.lineWidth = 1.2;
     ctx.beginPath();
-    ctx.moveTo(cx - 24, topY);
-    ctx.lineTo(cx + 24, topY);
-    ctx.lineTo(cx + 44, botY);
-    ctx.lineTo(cx - 44, botY);
+    ctx.moveTo(cx - halfTop, topY);
+    ctx.lineTo(cx + halfTop, topY);
+    ctx.lineTo(cx + halfBot, apronBotY);
+    ctx.lineTo(cx - halfBot, apronBotY);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
     ctx.strokeStyle = this.apron;
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(cx - 24, topY);
-    ctx.quadraticCurveTo(cx, topY - 22, cx + 24, topY);
+    ctx.moveTo(cx - halfTop, topY);
+    ctx.quadraticCurveTo(cx, topY - 22 * K, cx + halfTop, topY);
     ctx.stroke();
     // 小口袋
     ctx.fillStyle = 'rgba(0,0,0,0.10)';
-    rrect(ctx, cx - 14, botY - 22, 28, 14, 3);
+    rrect(ctx, cx - 14 * K, apronBotY - 22 * K, 28 * K, 14 * K, 3);
     ctx.fill();
 
     // 8 秒一轮：前 4 秒擦杯子，后 4 秒端盘子
     const phase = sec % 8;
-    const cupX = cx + 62;
+    const cupX = cx + 62 + 20;
     const cupY = botY + 6;
     if (phase < 4) {
       this.drawCup(ctx, cupX, cupY);

@@ -17,6 +17,9 @@ import {
 } from './petBridge';
 import { reloadCustomMeows, playMeow } from './meowAudio';
 import { getAdjust, setAdjust } from './skinAdjust';
+import { installErrorLogging, logEvent } from './applog';
+
+installErrorLogging('settings');
 
 type TabId = 'general' | 'focus' | 'tasks' | 'skins' | 'shutdown' | 'sound' | 'privacy' | 'about';
 const TAB_ORDER: TabId[] = ['general', 'focus', 'tasks', 'skins', 'shutdown', 'sound', 'privacy', 'about'];
@@ -53,6 +56,7 @@ function h<K extends keyof HTMLElementTagNameMap>(
 }
 
 function toast(text: string, err = false): void {
+  if (err) logEvent('error', 'settings', text);
   const el = $('toast');
   el.textContent = text;
   el.classList.toggle('err', err);

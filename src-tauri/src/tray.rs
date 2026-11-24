@@ -389,6 +389,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
             }
         })
         .on_menu_event(move |app, event| {
+            crate::applog::info("tray", &format!("menu item: {}", event.id().as_ref()));
             let state = app.state::<AppState>();
             match event.id().as_ref() {
                 "toggle_show" => {

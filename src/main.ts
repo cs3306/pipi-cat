@@ -18,6 +18,10 @@ import { clearSkinCache, loadSkin } from './skinLoader';
 import { ADJUST_STORAGE_KEY, getAdjust } from './skinAdjust';
 import { PetEffects } from './petEffects';
 import { pet, type FocusPhase, type PetSettings, type PetStatus, type ReminderEvent } from './petBridge';
+import { installErrorLogging, logEvent } from './applog';
+import { PhysicalPosition } from '@tauri-apps/api/dpi';
+
+installErrorLogging('main');
 
 interface AppSettings {
   x: number | null;
@@ -136,6 +140,62 @@ const engine = new KuroCatEngine(canvas);
 
 // 图片皮肤：id 以 "skin-" 开头的猫可能是图片皮肤，向后端取图；颜色皮肤取回为空，保持普通猫。
 let spriteReq = 0;
+// ───────── 拖动 ─────────
+// 正常用系统原生拖动（startDragging）。个别环境（例如虚拟机）里原生拖动会立刻返回、窗口不动；
+// 这时按住鼠标期间改用手动拖动：自己根据鼠标位移设置窗口位置。
+let leftDown = false;
+let lastOverCat = false;
+let overCatLogs = 0;
+let manualDrag: { sx: number; sy: number; wx: number; wy: number; lx: number; ly: number; raf: number } | null = null;
+
+function endManualDrag(reason: string): void {
+  const m = manualDrag;
+  if (!m) return;
+  manualDrag = null;
+  if (m.raf) cancelAnimationFrame(m.raf);
+  canvas.classList.remove('pet-dragging');
+  engine.onMouseUp('left');
+  void invoke('set_dragging', { dragging: false });
+  void invoke('save_window_pos');
+  logEvent('info', 'drag', `manual drag ended: ${reason}`);
+}
+
+async function beginManualDrag(sx: number, sy: number): Promise<void> {
+  try {
+    const p = await getCurrentWindow().outerPosition();
+    manualDrag = { sx, sy, wx: p.x, wy: p.y, lx: sx, ly: sy, raf: 0 };
+    logEvent('info', 'drag', `manual drag started at window (${p.x},${p.y})`);
+  } catch (err) {
+    logEvent('error', 'drag', `manual drag could not read window position: ${String(err)}`);
+    canvas.classList.remove('pet-dragging');
+    void invoke('set_dragging', { dragging: false });
+  }
+}
+
+window.addEventListener('mousemove', (e) => {
+  const m = manualDrag;
+  if (!m) return;
+  if ((e.buttons & 1) === 0) {
+    endManualDrag('button released');
+    return;
+  }
+  m.lx = e.screenX;
+  m.ly = e.screenY;
+  if (m.raf) return;
+  m.raf = requestAnimationFrame(() => {
+    m.raf = 0;
+    const dpr = window.devicePixelRatio || 1;
+    const x = Math.round(m.wx + (m.lx - m.sx) * dpr);
+    const y = Math.round(m.wy + (m.ly - m.sy) * dpr);
+    void getCurrentWindow().setPosition(new PhysicalPosition(x, y));
+  });
+});
+window.addEventListener('mouseup', () => {
+  leftDown = false;
+  endManualDrag('mouseup');
+});
+window.addEventListener('blur', () => endManualDrag('window blur'));
+
 async function syncSpriteSkin(catId: string | undefined): Promise<void> {
   const req = ++spriteReq;
   const clear = (): void => {
@@ -805,6 +865,10 @@ async function bootstrap(): Promise<void> {
     const c = ev.payload;
     altOverride = Boolean(c.altOverride);
     engine.onWindowCursor(c.relX, c.relY, c.overCat);
+    if (c.overCat !== lastOverCat) {
+      lastOverCat = c.overCat;
+      if (overCatLogs++ < 60) logEvent('info', 'cursor', `over cat -> ${c.overCat}`);
+    }
     const interactive = !settings.clickThroughLocked || altOverride;
     canvas.classList.toggle('pet-hover', c.overCat && interactive);
   });
@@ -835,16 +899,37 @@ async function bootstrap(): Promise<void> {
           return;
         }
       }
-      if (settings.clickThroughLocked && !altOverride && !e.altKey) return;
+      if (settings.clickThroughLocked && !altOverride && !e.altKey) {
+        logEvent('info', 'drag', 'mousedown ignored: click-through is locked');
+        return;
+      }
+      logEvent('info', 'drag', `mousedown: over_cat=${lastOverCat} screen=(${e.screenX},${e.screenY}) dpr=${window.devicePixelRatio}`);
+      leftDown = true;
       canvas.classList.add('pet-dragging');
       void invoke('set_dragging', { dragging: true });
+      const t0 = performance.now();
+      let nativeFailed = false;
+      let manual = false;
       try {
         await getCurrentWindow().startDragging();
+      } catch (err) {
+        nativeFailed = true;
+        logEvent('error', 'drag', `startDragging failed: ${String(err)}`);
+      }
+      try {
+        const dt = Math.round(performance.now() - t0);
+        logEvent('info', 'drag', `startDragging returned after ${dt}ms${nativeFailed ? ' (failed)' : ''}; button still down=${leftDown}`);
+        if ((nativeFailed || dt < 150) && leftDown) {
+          manual = true;
+          await beginManualDrag(e.screenX, e.screenY);
+        }
       } finally {
-        canvas.classList.remove('pet-dragging');
-        engine.onMouseUp('left');
-        void invoke('set_dragging', { dragging: false });
-        void invoke('save_window_pos');
+        if (!manual || !manualDrag) {
+          canvas.classList.remove('pet-dragging');
+          engine.onMouseUp('left');
+          void invoke('set_dragging', { dragging: false });
+          void invoke('save_window_pos');
+        }
       }
     }
   });

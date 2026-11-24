@@ -36,10 +36,42 @@ export interface MakerInput {
 
 export type BuildResult = { ok: true; pack: Record<string, unknown>; json: string } | { ok: false; errors: string[] };
 
-const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+// 与后端 pet-core::skin::is_hex_color 一致：#rgb / #rgba / #rrggbb / #rrggbbaa
+const HEX = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 const ID = /^[a-z0-9][a-z0-9-]{2,29}$/;
 
 export const isHexColor = (s: unknown): s is string => typeof s === 'string' && HEX.test(s);
+
+const RGB_RE = /^rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})(?:[\s,/]+([\d.]+%?))?\s*\)$/i;
+
+/** `rgba(210, 212, 216, 0.64)` → `#d2d4d8a3`。内置猫用 rgba 写半透明，皮肤格式只认十六进制。无法识别的原样返回。 */
+export function rgbToHex(s: string): string {
+  const m = RGB_RE.exec(s.trim());
+  if (!m) return s;
+  const ch = (x: string): number => Math.min(255, Number(x));
+  const h2 = (n: number): string => n.toString(16).padStart(2, '0');
+  let out = '#' + h2(ch(m[1])) + h2(ch(m[2])) + h2(ch(m[3]));
+  if (m[4] !== undefined) {
+    const a = m[4].endsWith('%') ? Number.parseFloat(m[4]) / 100 : Number(m[4]);
+    if (Number.isFinite(a) && a < 1) out += h2(Math.round(Math.max(0, a) * 255));
+  }
+  return out;
+}
+
+/** 把调色盘里所有「…Color」字段的 rgb()/rgba() 转成十六进制，并去掉值为 null 的颜色字段。不改动原对象。 */
+export function normalizeColors<T>(v: T, key = ''): T {
+  if (typeof v === 'string' && /color$/i.test(key)) return rgbToHex(v) as unknown as T;
+  if (Array.isArray(v)) return v.map((x) => normalizeColors(x, key)) as unknown as T;
+  if (v && typeof v === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      if (x === null && /color$/i.test(k)) continue;
+      out[k] = normalizeColors(x, k);
+    }
+    return out as T;
+  }
+  return v;
+}
 
 /** 把名字转成合法 id 的建议值（可能不够长，调用方需要再检查）。 */
 export function suggestId(name: string): string {

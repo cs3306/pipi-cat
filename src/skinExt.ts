@@ -35,7 +35,7 @@ function luminance(hex: string): number {
 /** 由毛色推导对比色围裙：深毛配浅围裙，浅毛配深围裙。 */
 export function deriveApronColor(furColor: string): string {
   if (!isHexColor(furColor)) return '#f4f1ea';
-  return luminance(furColor) < 0.4 ? '#f4f1ea' : '#3b4a6b';
+  return luminance(furColor) < 0.4 ? '#f4f1ea' : '#6a7fa5';
 }
 
 const KNOWN: ReadonlySet<string> = new Set(['schemaVersion', 'apronColor', 'mouthInnerColor', 'tongueColor']);

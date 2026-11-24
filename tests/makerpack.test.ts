@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPack, imageError, paletteErrors, suggestId } from '../src/makerPack.ts';
+import { buildPack, imageError, normalizeColors, paletteErrors, rgbToHex, suggestId } from '../src/makerPack.ts';
 
 const meta = { id: 'sunny-cat', name: 'Sunny', author: 'Ray', license: 'CC-BY-4.0', version: '1.0.0' };
 
@@ -72,4 +72,16 @@ test('layered pack errors: missing parts, geometry, unknown limb, too many segme
   for (const want of ['bad-scale', 'bad-pivot:torso', 'bad-z:torso', 'bad-attach:torso', 'unknown-limb:xx', 'too-many-segments:tail']) assert.ok(bad.includes(want), want);
   assert.ok(e({ parts: { torso: { image: img }, head: { image: img }, limbs: { fl: { image: img, pivot: [0.5, 0.5], end: [0.5, 0.52] } } } }).includes('bad-end:limb.fl'));
   assert.ok(e({ parts: { torso: { image: 'data:image/png;base64,AAAA' }, head: { image: img } } }).includes('not-an-image:torso'));
+});
+
+test('rgba colours from built-in cats become valid hex', () => {
+  assert.equal(rgbToHex('rgba(210, 212, 216, 0.64)'), '#d2d4d8a3');
+  assert.equal(rgbToHex('rgb(255, 0, 0)'), '#ff0000');
+  assert.equal(rgbToHex('rgba(1,2,3,1)'), '#010203');
+  assert.equal(rgbToHex('red'), 'red');
+  const pal = normalizeColors({ furColor: '#141314', whiskerColor: 'rgba(205, 208, 214, 0.54)', noseColor: null, tailFluffy: false });
+  assert.deepEqual(paletteErrors(pal), []);
+  assert.equal((pal as any).whiskerColor, '#cdd0d68a');
+  assert.ok(!('noseColor' in pal));
+  assert.deepEqual(paletteErrors({ furColor: '#fff', whiskerColor: '#aabbccdd' }), []);
 });

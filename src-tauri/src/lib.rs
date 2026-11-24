@@ -1,5 +1,6 @@
 #![recursion_limit = "256"]
 
+mod applog;
 mod cats;
 mod config;
 mod input_hook;
@@ -562,7 +563,21 @@ fn set_menu_open(state: State<'_, AppState>, open: bool) {
 
 #[tauri::command]
 fn set_dragging(state: State<'_, AppState>, dragging: bool) {
+    applog::info("drag", &format!("set_dragging({dragging})"));
     state.dragging.store(dragging, Ordering::Relaxed);
+}
+
+/// 前端（猫窗口、设置、制作器、菜单）把诊断信息写进同一份日志。
+#[tauri::command]
+fn log_event(level: String, tag: String, msg: String) {
+    let level = match level.as_str() {
+        "error" => "ERROR",
+        "warn" => "WARN",
+        _ => "INFO",
+    };
+    let tag: String = tag.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').take(24).collect();
+    let msg: String = msg.chars().take(2000).collect::<String>().replace('\n', " | ");
+    applog::write(level, &format!("ui:{tag}"), &msg);
 }
 
 #[tauri::command]
@@ -1517,6 +1532,7 @@ fn start_hit_test_loop(
             };
 
             if last_ignore != Some(should_ignore) {
+                log_ignore_toggle(should_ignore, over_cat, is_drag, is_menu, effective_locked);
                 #[cfg(windows)]
                 if is_win7_ulw {
                     win7_layered::set_click_through(should_ignore);
@@ -1580,6 +1596,21 @@ fn start_hit_test_loop(
             }
         }
     });
+}
+
+/// 记录「窗口是否穿透鼠标」的切换（只记前 300 次，避免日志被刷满）。排查"点不到猫/拖不动"时最有用。
+fn log_ignore_toggle(should_ignore: bool, over_cat: bool, dragging: bool, menu: bool, locked: bool) {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static N: AtomicU32 = AtomicU32::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    if n < 300 {
+        applog::info(
+            "cursor",
+            &format!("click-through -> {should_ignore} (over_cat={over_cat}, dragging={dragging}, menu={menu}, locked={locked})"),
+        );
+    } else if n == 300 {
+        applog::info("cursor", "(further click-through toggles are not logged)");
+    }
 }
 
 #[cfg(windows)]
@@ -1840,36 +1871,15 @@ fn linux_configure_display_env() {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-/// 发布版是 panic=abort 且没有控制台：任何 panic 都是"闪退"且不留痕迹。
-/// 这里把 panic 信息写进数据目录的 crash.log，方便定位。
-fn install_crash_log() {
-    std::panic::set_hook(Box::new(|info| {
-        let dir = config::app_data_dir();
-        let _ = std::fs::create_dir_all(&dir);
-        let thread = std::thread::current();
-        let text = format!(
-            "[{}] thread '{}' panicked: {}\n",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
-            thread.name().unwrap_or("?"),
-            info
-        );
-        use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("crash.log")) {
-            let _ = f.write_all(text.as_bytes());
-        }
-    }));
-}
-
 pub fn run() {
-    install_crash_log();
+    applog::install_panic_hook();
+    applog::banner();
     #[cfg(windows)]
     {
         win_wait_for_previous_pid_if_requested();
         win_configure_local_webview2_runtime();
     }
+    applog::webview_env();
     #[cfg(target_os = "linux")]
     {
         linux_configure_display_env();
@@ -1909,6 +1919,8 @@ pub fn run() {
         })
         .setup(move |app| {
             let handle = app.handle().clone();
+            applog::info("boot", "setup: start");
+            applog::describe_windows(&handle);
             let s = settings_for_setup.lock().unwrap().clone();
 
             #[cfg(target_os = "macos")]
@@ -2084,6 +2096,7 @@ pub fn run() {
             preview_scale,
             set_menu_open,
             set_dragging,
+            log_event,
             set_update_banner_open,
             is_win7_ulw_mode,
             win7_present_frame,

@@ -95,7 +95,7 @@ test('manifest: rejects path escapes and bad refs', () => {
 
 test('skinExt: derive defaults, reject bad colors visibly', () => {
   assert.equal(deriveApronColor('#111111'), '#f4f1ea');
-  assert.equal(deriveApronColor('#f0e0d0'), '#3b4a6b');
+  assert.equal(deriveApronColor('#f0e0d0'), '#6a7fa5');
   const r = resolveSkinExt('#111111', undefined);
   assert.equal(r.schemaVersion, 1);
   const s = sanitizeSkinExt({ apronColor: '#AABBCC', tongueColor: 'red', schemaVersion: 7 });

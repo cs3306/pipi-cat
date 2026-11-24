@@ -11,8 +11,11 @@ import { loadImage, SpriteSkin, type SpriteSlot } from './spriteSkin';
 import { LayeredSkin } from './rig/rigRender';
 import { imageRefs, parseRig } from './rig/rigTypes';
 import { cleanRig, emptyRig, renderRigEditor, type RigState } from './makerRig';
-import { buildPack, imageError, isHexColor, paletteErrors, suggestId, SLOTS, type Slot } from './makerPack';
+import { buildPack, imageError, isHexColor, normalizeColors, paletteErrors, suggestId, SLOTS, type Slot } from './makerPack';
 import type { CatPattern, CatSkinConfig } from './catSkins';
+import { installErrorLogging, logEvent } from './applog';
+
+installErrorLogging('maker');
 
 type Dict = Record<string, string>;
 const ZH: Dict = {
@@ -150,6 +153,7 @@ function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, 
 }
 let toastTimer = 0;
 function toast(msg: string, err = false): void {
+  if (err) logEvent('error', 'maker', msg);
   const el = document.getElementById('toast')!;
   el.textContent = msg;
   el.className = `toast show${err ? ' err' : ''}`;
@@ -268,7 +272,7 @@ function colorRow(key: string, labelKey: string, required: boolean): HTMLElement
     const set = typeof v === 'string' && isHexColor(v);
     on.checked = set;
     picker.disabled = !set;
-    if (set) picker.value = expandHex(v as string);
+    if (set) picker.value = expandHex((v as string).length > 7 ? (v as string).slice(0, 7) : (v as string));
   };
   colorSetters.push(sync);
   picker.addEventListener('input', () => { state.palette[key] = picker.value; syncRaw(); onChange(); });
@@ -508,7 +512,7 @@ async function loadTarget(target: string, keepName = false): Promise<void> {
       loadPack(JSON.parse(await pet.skinRead(id)), { type: 'edit', id });
     } else if (type === 'builtin' || type === 'override') {
       const look = await pet.skinBuiltinLook(id);
-      const pal = { ...(type === 'override' && look.override ? look.override : look.builtin) };
+      const pal = normalizeColors({ ...(type === 'override' && look.override ? look.override : look.builtin) });
       const base = tr(`b_${id}`) === `b_${id}` ? look.name : tr(`b_${id}`);
       state.kind = 'palette';
       state.palette = pal;

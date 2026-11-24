@@ -4,18 +4,9 @@
 
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
-/// 诊断日志：追加写入数据目录的 pipi-cat.log。窗口卡死/消失时用来看走到了哪一步。
+/// 诊断日志（统一写进 pipi-cat.log，见 applog.rs）。
 pub fn trace(msg: &str) {
-    use std::io::Write;
-    let dir = crate::config::app_data_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    let t = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("pipi-cat.log")) {
-        let _ = writeln!(f, "[{t}] {msg}");
-    }
+    crate::applog::info("window", msg);
 }
 
 /// 与猫窗口（tauri.conf.json）完全一致的浏览器参数。

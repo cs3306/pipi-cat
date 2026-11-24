@@ -6,6 +6,9 @@ import { DEFAULT_BUILTIN_CATS, type CatSkinConfig } from './catSkins';
 import type { KeyboardLayoutId } from './keyboardLayout';
 import { setLang, t } from './i18n';
 import { errText, pet, type PetStatus, type ReminderEvent } from './petBridge';
+import { installErrorLogging } from './applog';
+
+installErrorLogging('menu');
 
 interface AppSettings {
   x: number | null;
