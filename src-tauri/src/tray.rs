@@ -2,7 +2,7 @@ use crate::config::AppSettings;
 use crate::{
     apply_breed_and_save, apply_keyboard_layout_and_save, apply_keyboard_orientation_and_save,
     apply_scale_and_save, apply_tail_key_mode_and_save, is_pet_visible, reset_window_position,
-    set_pet_always_on_top, set_pet_visible, shutdown_pet_windows, AppState,
+    set_pet_always_on_top, set_pet_visible, AppState,
 };
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -24,7 +24,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
     let display_menu = crate::windows_display::create_menu(app)?;
     #[cfg(target_os = "macos")]
     let display_menu = crate::macos_window::create_display_menu(app)?;
-    let toggle_show = MenuItem::with_id(app, "toggle_show", "显示 / 隐藏小黑猫", true, None::<&str>)?;
+    let toggle_show = MenuItem::with_id(app, "toggle_show", "显示 / 隐藏猫咪", true, None::<&str>)?;
     let pause_guard = CheckMenuItem::with_id(
         app,
         "pause_guard",
@@ -210,7 +210,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
     let reset_pos = MenuItem::with_id(app, "reset_pos", "重置位置到右下角", true, None::<&str>)?;
     #[cfg(windows)]
     let desktop_shortcut =
-        MenuItem::with_id(app, "desktop_shortcut", "创建桌面快捷方式 (KuroCat)", true, None::<&str>)?;
+        MenuItem::with_id(app, "desktop_shortcut", "创建桌面快捷方式 (pipi-cat)", true, None::<&str>)?;
     #[cfg(target_os = "macos")]
     let mac_input_menu = {
         let mac_reconnect = MenuItem::with_id(
@@ -262,7 +262,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
-    let quit = MenuItem::with_id(app, "quit", "退出 KuroCat", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "退出 pipi-cat", true, None::<&str>)?;
     #[cfg(windows)]
     let open_settings =
         MenuItem::with_id(app, "open_settings", "宠物设置… / Settings…", true, None::<&str>)?;
@@ -428,7 +428,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                     let _ = pause_guard.set_checked(next);
                     if let Some(tray) = app.tray_by_id("kuro-tray") {
                         let tip = if next {
-                            "KuroCat（已暂停监听 · 反作弊护航中）"
+                            "pipi-cat（已暂停监听 · 反作弊护航中）"
                         } else {
                             default_tray_tooltip()
                         };
@@ -668,8 +668,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                     });
                 }
                 "quit" => {
-                    shutdown_pet_windows();
-                    app.exit(0);
+                    crate::quit_now(app, "tray");
                 }
                 _ => {
                     #[cfg(windows)]

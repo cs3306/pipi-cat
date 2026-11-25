@@ -185,6 +185,45 @@ pub fn start_watchdog(app: tauri::AppHandle) {
     });
 }
 
+static POLLER_TICK_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn now_ms() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+/// 鼠标轮询线程每轮调用一次，证明自己还活着。
+pub fn touch_poller() {
+    POLLER_TICK_MS.store(now_ms(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// 监视鼠标轮询线程：它卡住（通常意味着"点不到猫、拖不动"）时写日志，恢复后再写一条。
+pub fn start_poller_watch() {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+    let _ = std::thread::Builder::new().name("poller-watch".into()).spawn(|| {
+        let mut stalled = false;
+        loop {
+            std::thread::sleep(Duration::from_secs(2));
+            let t = POLLER_TICK_MS.load(Ordering::Relaxed);
+            if t == 0 {
+                continue;
+            }
+            let age = now_ms().saturating_sub(t);
+            if age > 3000 && !stalled {
+                stalled = true;
+                write(
+                    "WARN",
+                    "poller",
+                    &format!("cursor poller has not ticked for {age}ms (building_window={})", crate::pet::building_window()),
+                );
+            } else if age <= 3000 && stalled {
+                stalled = false;
+                write("WARN", "poller", "cursor poller recovered");
+            }
+        }
+    });
+}
+
 /// Windows：捕获原生崩溃（访问冲突等），崩溃前把异常代码和地址写进日志。
 /// Rust 的 panic 钩子管不到这类崩溃（例如 WebView2 / COM 里出错）。
 #[cfg(windows)]

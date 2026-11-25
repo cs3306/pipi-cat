@@ -2,7 +2,7 @@
 //! 猫窗口只有 420×440 且平时穿透、不抢焦点，放不下这些界面也无法正常输入。
 //! 用 async：Windows 上在同步命令里创建 WebView 窗口可能死锁（Tauri 已知问题）。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -14,24 +14,34 @@ pub fn trace(msg: &str) {
 
 /// 正在创建新窗口。创建 WebView2 窗口时主线程要泵消息，此时猫窗口的鼠标轮询线程
 /// 如果还在每 25ms 跨线程操作主窗口，有卡死的嫌疑；所以创建期间让它暂停。
-static BUILDING: AtomicBool = AtomicBool::new(false);
+/// 只最多暂停 2.5 秒：就算创建卡住不返回，猫窗口的鼠标处理也会恢复，不会跟着一起僵住。
+static BUILDING_SINCE_MS: AtomicU64 = AtomicU64::new(0);
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(1)
+        .max(1)
+}
 
 pub fn building_window() -> bool {
-    BUILDING.load(Ordering::Relaxed)
+    let since = BUILDING_SINCE_MS.load(Ordering::Relaxed);
+    since != 0 && now_ms().saturating_sub(since) < 2500
 }
 
 struct BuildGuard;
 
 impl BuildGuard {
     fn new() -> Self {
-        BUILDING.store(true, Ordering::Relaxed);
+        BUILDING_SINCE_MS.store(now_ms(), Ordering::Relaxed);
         BuildGuard
     }
 }
 
 impl Drop for BuildGuard {
     fn drop(&mut self) {
-        BUILDING.store(false, Ordering::Relaxed);
+        BUILDING_SINCE_MS.store(0, Ordering::Relaxed);
     }
 }
 

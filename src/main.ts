@@ -194,6 +194,16 @@ window.addEventListener('mouseup', () => {
   leftDown = false;
   endManualDrag('mouseup');
 });
+// 手动拖动时窗口是"追着鼠标跑"的；鼠标一快就会跑出窗口，之后收不到 mousemove，拖动就卡住（拖不到另一个显示器的原因）。
+// 按下时捕获指针，鼠标移出窗口后仍能收到移动和松开事件。
+canvas.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  try {
+    canvas.setPointerCapture(e.pointerId);
+  } catch {
+    /* ignore */
+  }
+});
 window.addEventListener('blur', () => endManualDrag('window blur'));
 
 async function syncSpriteSkin(catId: string | undefined): Promise<void> {
@@ -299,7 +309,7 @@ function syncMenuUI(): void {
   const headerEl = document.getElementById('menu-header');
   if (headerEl && activeCat) {
     const emoji = activeCat.emoji || '🐱';
-    headerEl.textContent = `${emoji} KuroCat ${activeCat.name}`;
+    headerEl.textContent = `${emoji} pipi-cat ${activeCat.name}`;
     headerEl.style.color = activeCat.accentColor || '#c8f538';
   }
 
@@ -449,7 +459,7 @@ async function createDesktopShortcut(): Promise<void> {
       hint.textContent = '✓ 已创建';
       hint.classList.add('copied');
       setTimeout(() => {
-        hint.textContent = 'KuroCat';
+        hint.textContent = 'pipi-cat';
         hint.classList.remove('copied');
       }, 1800);
     }

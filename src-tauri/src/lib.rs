@@ -680,10 +680,33 @@ fn create_desktop_shortcut() -> Result<String, String> {
     config::create_desktop_shortcut()
 }
 
-#[tauri::command]
-fn quit_app(app: AppHandle) {
+/// 结束进程，不依赖任何清理逻辑。
+fn force_terminate() -> ! {
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
+        TerminateProcess(GetCurrentProcess(), 0);
+    }
+    std::process::exit(0)
+}
+
+/// 退出程序（托盘「退出」、右键菜单「退出」、以管理员身份重启都走这里）。
+/// 正常退出要等 WebView2 收尾，个别环境（虚拟机、多窗口）里它会卡住，表现为"点退出没反应、进程不结束"。
+/// 所以先起一个保险线程：2 秒内没正常退出，就直接结束进程。
+pub fn quit_now(app: &AppHandle, source: &str) {
+    applog::info("exit", &format!("quit requested ({source})"));
+    std::thread::spawn(|| {
+        std::thread::sleep(Duration::from_millis(2000));
+        applog::warn("exit", "graceful exit did not finish within 2s; terminating the process");
+        force_terminate();
+    });
     shutdown_pet_windows();
     app.exit(0);
+}
+
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    quit_now(&app, "menu");
 }
 
 pub fn apply_breed_and_save(app: &AppHandle, breed: &str) {
@@ -1253,7 +1276,7 @@ pub fn win_restart_as_admin(app: AppHandle) {
         };
         if result > 32 {
             crate::input_hook::set_hooks_paused(true);
-            app.exit(0);
+            quit_now(&app, "restart-as-admin");
         }
     });
 }
@@ -1346,6 +1369,7 @@ fn start_hit_test_loop(
         loop {
             std::thread::sleep(Duration::from_millis(25));
 
+            applog::touch_poller();
             if pet::building_window() {
                 continue;
             }
@@ -1926,6 +1950,7 @@ pub fn run() {
             applog::info("boot", "setup: start");
             applog::describe_windows(&handle);
             applog::start_watchdog(handle.clone());
+            applog::start_poller_watch();
             let s = settings_for_setup.lock().unwrap().clone();
 
             #[cfg(target_os = "macos")]
@@ -2115,7 +2140,7 @@ pub fn run() {
             quit_app,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running KuroCat");
+        .expect("error while running pipi-cat");
 }
 
 #[cfg(all(test, windows))]

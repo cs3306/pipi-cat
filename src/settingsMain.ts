@@ -840,7 +840,7 @@ function renderAll(): void {
     }),
   );
   $('panel').replaceChildren(...PAGES[tab]());
-  document.title = `KuroCat · ${t(`tab.${tab}`)}`;
+  document.title = `pipi-cat · ${t(`tab.${tab}`)}`;
   document.documentElement.lang = getLang();
 }
 

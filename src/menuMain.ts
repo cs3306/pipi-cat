@@ -278,7 +278,7 @@ function syncUI(): void {
   const headerEl = document.getElementById('menu-header');
   if (headerEl && activeCat) {
     const emoji = activeCat.emoji || '🐱';
-    headerEl.textContent = `${emoji} KuroCat ${activeCat.name}`;
+    headerEl.textContent = `${emoji} pipi-cat ${activeCat.name}`;
     headerEl.style.color = activeCat.accentColor || '#c8f538';
   }
 }
@@ -352,7 +352,7 @@ async function createDesktopShortcut(): Promise<void> {
       hint.textContent = '✓ 已创建';
       hint.classList.add('copied');
       setTimeout(() => {
-        hint.textContent = 'KuroCat';
+        hint.textContent = 'pipi-cat';
         hint.classList.remove('copied');
       }, 1800);
     }
@@ -361,7 +361,7 @@ async function createDesktopShortcut(): Promise<void> {
     if (hint) {
       hint.textContent = '失败';
       setTimeout(() => {
-        hint.textContent = 'KuroCat';
+        hint.textContent = 'pipi-cat';
       }, 1800);
     }
   }
