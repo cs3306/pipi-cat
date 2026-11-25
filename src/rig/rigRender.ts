@@ -22,6 +22,9 @@ interface Drawable {
   fn: () => void;
 }
 
+/** 两段肢体够不到目标时的最大拉伸倍数 */
+const MAX_REACH_STRETCH = 2.2;
+
 export class LayeredSkin {
   private nextBlinkAt = 0;
   private blinkUntil = 0;
@@ -53,7 +56,7 @@ export class LayeredSkin {
     anchorY: number,
     input: RigInput,
     adj: SkinAdjust,
-    /** 'back'：躯干/头/尾；'front'：四肢（引擎在键盘之后调用，爪子才会按在键盘上）；默认 all */
+    /** 'back'：躯干/尾；'front'：四肢+头（引擎在键盘之后调用，爪子按在键上，头仍盖在手臂上）；默认 all */
     phase: 'all' | 'back' | 'front' = 'all',
   ): void {
     const pose: RigPose = clampRigPose(poseFromInput(input));
@@ -112,6 +115,7 @@ export class LayeredSkin {
         }
         drawImg(key, head.pivot);
       }),
+      true,
     );
 
     // 四肢
@@ -161,18 +165,36 @@ export class LayeredSkin {
       const v1 = segVec(segs[1], i1.naturalWidth, i1.naturalHeight);
       let rot0 = 0;
       let rot1 = 0;
+      // 目标超出手臂长度时沿肢体方向拉长（上臂拉得多、前爪拉得少，爪子形状基本不变），像原版猫伸手够键盘
+      let ku = 1;
+      let kf = 1;
       if (local) {
-        const r = solveTwoSegments(v0.len, v1.len, v0.ang, v1.ang, local, bend);
+        const dist = Math.hypot(local.x, local.y);
+        if (dist > v0.len + v1.len) {
+          ku = Math.min(MAX_REACH_STRETCH, (dist - 0.6 * v1.len) / (v0.len + 0.4 * v1.len));
+          kf = 1 + (ku - 1) * 0.4;
+        }
+        const r = solveTwoSegments(v0.len * ku, v1.len * kf, v0.ang, v1.ang, local, bend);
         rot0 = r.rot0;
         rot1 = r.rot1;
       }
       ctx.save();
+      const stretchAlong = (ang: number, k: number): void => {
+        if (k === 1) return;
+        ctx.rotate(ang);
+        ctx.scale(k, 1);
+        ctx.rotate(-ang);
+      };
       ctx.rotate(rot0);
+      ctx.save();
+      stretchAlong(v0.ang, ku);
       drawSeg(imgKey.seg(imgKey.limb(id), 0), segs[0]);
-      // 第二段的支点在第一段的 end 处（按第一段静止方向的向量）
-      ctx.translate(Math.cos(v0.ang) * v0.len, Math.sin(v0.ang) * v0.len);
+      ctx.restore();
+      // 第二段的支点在第一段的 end 处（按第一段静止方向的向量，含拉伸）
+      ctx.translate(Math.cos(v0.ang) * v0.len * ku, Math.sin(v0.ang) * v0.len * ku);
       // rot1 是相对局部坐标系的总旋转；当前坐标系已转过 rot0，所以补差值
       ctx.rotate(rot1 - rot0);
+      stretchAlong(v1.ang, kf);
       drawSeg(imgKey.seg(imgKey.limb(id), 1), segs[1]);
       ctx.restore();
       return;
