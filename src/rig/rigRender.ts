@@ -47,14 +47,24 @@ export class LayeredSkin {
   }
 
   /** 以 (anchorX, anchorY) 为地面锚点绘制。input 来自引擎；pose 由适配器给出。 */
-  draw(ctx: CanvasRenderingContext2D, anchorX: number, anchorY: number, input: RigInput, adj: SkinAdjust): void {
+  draw(
+    ctx: CanvasRenderingContext2D,
+    anchorX: number,
+    anchorY: number,
+    input: RigInput,
+    adj: SkinAdjust,
+    /** 'back'：躯干/头/尾；'front'：四肢（引擎在键盘之后调用，爪子才会按在键盘上）；默认 all */
+    phase: 'all' | 'back' | 'front' = 'all',
+  ): void {
     const pose: RigPose = clampRigPose(poseFromInput(input));
     pose.eyesClosed = this.blink(input.now, pose.eyesClosed);
     const s = this.def.scale * adj.scale;
     const base = ctx.getTransform();
     const items: Drawable[] = [];
     let order = 0;
-    const add = (z: number, fn: () => void): void => {
+    const add = (z: number, fn: () => void, front = false): void => {
+      if (phase === 'back' && front) return;
+      if (phase === 'front' && !front) return;
       items.push({ z, order: order++, fn });
     };
 
@@ -108,7 +118,7 @@ export class LayeredSkin {
     for (const id of LIMB_IDS) {
       const part = this.def.limbs[id];
       if (!part) continue;
-      add(part.z, () => frame(() => this.drawLimb(ctx, base, id, part, pose, s)));
+      add(part.z, () => frame(() => this.drawLimb(ctx, base, id, part, pose, s)), true);
     }
 
     // 尾巴

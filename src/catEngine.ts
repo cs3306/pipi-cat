@@ -868,7 +868,7 @@ export class KuroCatEngine {
     const now = performance.now();
     const adj = this.skinAdjust;
     if (this.layered) {
-      this.layered.draw(ctx, this.catCenterX, this.catBaseY + 24, this.getRigInput(breath), adj);
+      this.layered.draw(ctx, this.catCenterX, this.catBaseY + 24, this.getRigInput(breath), adj, 'back');
     } else {
       this.sprite?.draw(
         ctx,
@@ -882,6 +882,8 @@ export class KuroCatEngine {
     }
     this.drawMiniMouse(ctx);
     this.drawKeyboard(ctx);
+    // 分层皮肤的四肢画在键盘之后，爪子才会按在键上而不是被键盘盖住
+    this.layered?.draw(ctx, this.catCenterX, this.catBaseY + 24, this.getRigInput(breath), this.skinAdjust, 'front');
     if (this.showKeyBubbles && !this.privacyMode) {
       this.drawKeyBubbles(ctx);
       this.drawMouseBadges(ctx);
