@@ -19,6 +19,55 @@ fn default_tray_tooltip() -> &'static str {
     "pipi-cat"
 }
 
+/// 「角色外观」子菜单：前 7 项是内置角色（固定），其后是已安装的自定义皮肤（动态）。
+const BUILTIN_BREED_ITEMS: usize = 7;
+const BREED_CAT_PREFIX: &str = "breed_cat:";
+const MAX_CUSTOM_BREED_ITEMS: usize = 40;
+
+struct BreedMenu(Submenu<tauri::Wry>);
+
+fn rebuild_breed_menu(app: &AppHandle) -> tauri::Result<()> {
+    let Some(menu) = app.try_state::<BreedMenu>() else {
+        return Ok(());
+    };
+    let menu = &menu.0;
+    // 先清掉内置项之后的全部条目（上一次追加的分隔线与自定义皮肤），再按当前猫列表重建。
+    for index in (BUILTIN_BREED_ITEMS..menu.items()?.len()).rev() {
+        menu.remove_at(index)?;
+    }
+    let customs: Vec<crate::cats::CatSkinConfig> = crate::cats::all_cats()
+        .into_iter()
+        .filter(|c| !c.builtin)
+        .take(MAX_CUSTOM_BREED_ITEMS)
+        .collect();
+    if customs.is_empty() {
+        return Ok(());
+    }
+    menu.append(&PredefinedMenuItem::separator(app)?)?;
+    for cat in customs {
+        let emoji = cat.emoji.as_deref().filter(|e| !e.is_empty()).unwrap_or("🐱");
+        let label = format!("{emoji} {}", cat.name);
+        menu.append(&MenuItem::with_id(
+            app,
+            format!("{BREED_CAT_PREFIX}{}", cat.id),
+            label,
+            true,
+            None::<&str>,
+        )?)?;
+    }
+    Ok(())
+}
+
+/// 猫列表变化（安装/卸载/改名皮肤）后调用。菜单操作放到主线程做。
+pub fn refresh_breed_menu(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Err(e) = rebuild_breed_menu(&handle) {
+            crate::applog::info("tray", &format!("refresh breed menu failed: {e}"));
+        }
+    });
+}
+
 pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
     #[cfg(windows)]
     let display_menu = crate::windows_display::create_menu(app)?;
@@ -161,6 +210,7 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
             &breed_dafeiyu,
         ],
     )?;
+    app.manage(BreedMenu(breed_menu.clone()));
 
     let scale_25 = MenuItem::with_id(app, "scale_25", "25%（迷你）", true, None::<&str>)?;
     let scale_50 = MenuItem::with_id(app, "scale_50", "50%（小巧）", true, None::<&str>)?;
@@ -577,6 +627,9 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
                     let _ = mcp_toggle.set_checked(enabled);
                     let _ = app.emit("kuro-settings", s.clone());
                 }
+                id if id.starts_with(BREED_CAT_PREFIX) => {
+                    apply_breed_and_save(app, &id[BREED_CAT_PREFIX.len()..]);
+                }
                 "breed_black" => apply_breed_and_save(app, "black"),
                 "breed_ragdoll" => apply_breed_and_save(app, "ragdoll"),
                 "breed_orange" => apply_breed_and_save(app, "orange-tabby"),
@@ -680,5 +733,6 @@ pub fn setup_tray(app: &AppHandle, initial: &AppSettings) -> tauri::Result<()> {
         })
         .build(app)?;
 
+    refresh_breed_menu(app);
     Ok(())
 }

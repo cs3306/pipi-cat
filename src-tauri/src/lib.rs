@@ -778,6 +778,8 @@ pub fn reload_and_emit_all(app: &AppHandle) {
 
     let _ = app.emit("kuro-cats", cats);
     let _ = app.emit("kuro-settings", disk_settings);
+    // 托盘「角色外观」里的自定义皮肤条目跟着猫列表（cats.json）刷新
+    tray::refresh_breed_menu(app);
 }
 
 fn file_mtime(path: &std::path::Path) -> Option<SystemTime> {
