@@ -9,6 +9,7 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// 诊断日志（统一写进 pipi-cat.log，见 applog.rs）。
 pub fn trace(msg: &str) {
+    crate::applog::note_window_event(msg);
     crate::applog::info("window", msg);
 }
 
@@ -25,9 +26,19 @@ fn now_ms() -> u64 {
         .max(1)
 }
 
+/// 窗口关闭/销毁期间同样让轮询暂停到这个时刻（毫秒时间戳）。
+/// 日志显示：卡死发生在设置窗口 Destroyed 之后几毫秒，当时没有任何窗口在创建，
+/// 而主线程销毁 WebView2 时同样会泵消息；轮询线程每 25ms 跨线程调用主线程，正好撞上。
+static PAUSE_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
+
+fn pause_poller_for(ms: u64) {
+    PAUSE_UNTIL_MS.fetch_max(now_ms() + ms, Ordering::Relaxed);
+}
+
+/// 轮询是否应该让路：正在创建窗口，或窗口刚请求关闭/刚销毁。
 pub fn building_window() -> bool {
     let since = BUILDING_SINCE_MS.load(Ordering::Relaxed);
-    since != 0 && now_ms().saturating_sub(since) < 2500
+    (since != 0 && now_ms().saturating_sub(since) < 2500) || now_ms() < PAUSE_UNTIL_MS.load(Ordering::Relaxed)
 }
 
 struct BuildGuard;
@@ -121,9 +132,26 @@ async fn open_named(app: AppHandle, label: &str, page: &str, title: &str, size: 
                 done.store(true, Ordering::Relaxed);
                 trace(&format!("open {label}: attempt {} ok after {}ms", i + 1, started.elapsed().as_millis()));
                 let name = label.to_string();
+                // 设置窗口：关闭 = 隐藏，不销毁。日志里两次卡死都发生在销毁之后；
+                // 保留窗口，再次打开只走上面的 show()，既不销毁也不重新创建 WebView2。
+                // 制作器仍然正常销毁（保持"关掉即丢弃编辑状态"的行为），但销毁期间让轮询暂停。
+                let hide_on_close = label == "settings";
+                let hider = w.clone();
                 w.on_window_event(move |ev| match ev {
-                    tauri::WindowEvent::CloseRequested { .. } => trace(&format!("{name}: CloseRequested")),
-                    tauri::WindowEvent::Destroyed => trace(&format!("{name}: Destroyed")),
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        if hide_on_close {
+                            trace(&format!("{name}: CloseRequested -> hide"));
+                            api.prevent_close();
+                            let _ = hider.hide();
+                        } else {
+                            trace(&format!("{name}: CloseRequested"));
+                            pause_poller_for(2500);
+                        }
+                    }
+                    tauri::WindowEvent::Destroyed => {
+                        trace(&format!("{name}: Destroyed"));
+                        pause_poller_for(1500);
+                    }
                     _ => {}
                 });
                 return Ok(());

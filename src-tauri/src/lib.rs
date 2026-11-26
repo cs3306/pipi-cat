@@ -1419,12 +1419,16 @@ fn start_hit_test_loop(
             std::thread::sleep(Duration::from_millis(25));
 
             applog::touch_poller();
+            applog::poller_stage(0);
             if pet::building_window() {
+                applog::poller_stage(8);
                 continue;
             }
             if paused_guard.load(Ordering::Relaxed) {
+                applog::poller_stage(8);
                 continue;
             }
+            applog::poller_stage(1);
             let Some(win) = app.get_webview_window("main") else {
                 continue;
             };
@@ -1433,6 +1437,7 @@ fn start_hit_test_loop(
             #[cfg(not(windows))]
             let is_win7_ulw = false;
 
+            applog::poller_stage(2);
             if is_win7_ulw {
                 #[cfg(windows)]
                 if !win7_layered::is_visible() {
@@ -1441,11 +1446,13 @@ fn start_hit_test_loop(
             } else if !win.is_visible().unwrap_or(false) {
                 continue;
             }
+            applog::poller_stage(3);
             let sf = win.scale_factor().unwrap_or(1.0);
             let Some((cx, cy)) = get_cursor_pos(sf) else {
                 continue;
             };
 
+            applog::poller_stage(4);
             let (win_x, win_y, w, h) = if is_win7_ulw {
                 #[cfg(windows)]
                 {
@@ -1487,6 +1494,7 @@ fn start_hit_test_loop(
             // checks actual topmost band membership + EnumWindows stacking order against the
             // foreground window every ~150ms (and shortly after foreground switches), reasserting
             // HWND_TOPMOST strictly on the window owner thread without stealing focus (SWP_NOACTIVATE).
+            applog::poller_stage(5);
             #[cfg(windows)]
             if always_on_top && !is_menu && !is_drag {
                 let fg_raw = win_foreground_hwnd();
@@ -1607,6 +1615,7 @@ fn start_hit_test_loop(
                 !over_interactive
             };
 
+            applog::poller_stage(6);
             if last_ignore != Some(should_ignore) {
                 log_ignore_toggle(should_ignore, over_cat, is_drag, is_menu, effective_locked);
                 #[cfg(windows)]
@@ -1659,6 +1668,7 @@ fn start_hit_test_loop(
                 last_cursor = (cx, cy);
                 last_alt_override = alt_override;
                 last_effective_locked = effective_locked;
+                applog::poller_stage(7);
                 let _ = app.emit(
                     "kuro-cursor",
                     WindowCursorInfo {

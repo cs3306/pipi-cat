@@ -205,7 +205,15 @@ pub fn start_watchdog(app: tauri::AppHandle) {
                 continue;
             }
             stalls += 1;
-            write("WARN", "watchdog", &format!("main thread not responding for >3s (stall #{stalls})"));
+            write(
+                "WARN",
+                "watchdog",
+                &format!(
+                    "main thread not responding for >3s (stall #{stalls}); poller_stage={}, last_window_event={}",
+                    poller_stage_name(),
+                    last_window_event()
+                ),
+            );
             let mut logged = 3u64;
             loop {
                 match rx.recv_timeout(Duration::from_secs(5)) {
@@ -230,6 +238,48 @@ pub fn start_watchdog(app: tauri::AppHandle) {
 }
 
 static POLLER_TICK_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 鼠标轮询线程当前走到哪一步（每步都会跨线程调用主线程）。主线程卡死时，日志里能看到轮询线程正卡在哪一步。
+static POLLER_STAGE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+const POLLER_STAGES: [&str; 9] = [
+    "tick-start",
+    "find-window",
+    "is_visible",
+    "scale+cursor",
+    "geometry",
+    "topmost-guard",
+    "set-ignore",
+    "emit-cursor",
+    "paused",
+];
+
+pub fn poller_stage(i: usize) {
+    POLLER_STAGE.store(i, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn poller_stage_name() -> &'static str {
+    POLLER_STAGES
+        .get(POLLER_STAGE.load(std::sync::atomic::Ordering::Relaxed))
+        .copied()
+        .unwrap_or("?")
+}
+
+/// 最近一次窗口生命周期事件（设置/制作器窗口的打开、关闭请求、销毁），卡死时用来对照"卡之前主线程在做什么"。
+static LAST_WINDOW_EVENT: Mutex<(u64, String)> = Mutex::new((0, String::new()));
+
+pub fn note_window_event(msg: &str) {
+    let mut g = LAST_WINDOW_EVENT.lock().unwrap_or_else(|e| e.into_inner());
+    *g = (now_ms(), msg.chars().take(80).collect());
+}
+
+fn last_window_event() -> String {
+    let g = LAST_WINDOW_EVENT.lock().unwrap_or_else(|e| e.into_inner());
+    if g.0 == 0 {
+        "none".to_string()
+    } else {
+        format!("{:?} {}ms ago", g.1, now_ms().saturating_sub(g.0))
+    }
+}
 
 fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
@@ -258,7 +308,11 @@ pub fn start_poller_watch() {
                 write(
                     "WARN",
                     "poller",
-                    &format!("cursor poller has not ticked for {age}ms (building_window={})", crate::pet::building_window()),
+                    &format!(
+                        "cursor poller has not ticked for {age}ms (building_or_paused={}, stage={})",
+                        crate::pet::building_window(),
+                        poller_stage_name()
+                    ),
                 );
             } else if age <= 3000 && stalled {
                 stalled = false;
