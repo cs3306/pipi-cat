@@ -95,9 +95,53 @@ pub fn banner() {
             cfg!(debug_assertions)
         ),
     );
-    write("INFO", "boot", &format!("exe={:?}", std::env::current_exe().ok()));
-    write("INFO", "boot", &format!("data_dir={:?}", crate::config::app_data_dir()));
-    write("INFO", "boot", &format!("args={:?}", std::env::args().collect::<Vec<_>>()));
+    // 路径里常带 Windows 用户名（C:\Users\<name>\…），写日志前把用户目录替换成 `~`。
+    write("INFO", "boot", &redact_home(&format!("exe={:?}", std::env::current_exe().ok())));
+    write("INFO", "boot", &redact_home(&format!("data_dir={:?}", crate::config::app_data_dir())));
+    write("INFO", "boot", &redact_home(&format!("args={:?}", std::env::args().collect::<Vec<_>>())));
+}
+
+/// 把文本里的用户主目录（USERPROFILE / HOME）替换成 `~`。`{:?}` 会把反斜杠写成双反斜杠，两种写法都处理。
+pub fn redact_home(s: &str) -> String {
+    let mut out = s.to_string();
+    for var in ["USERPROFILE", "HOME"] {
+        if let Ok(home) = std::env::var(var) {
+            out = redact_with(&out, &home);
+        }
+    }
+    out
+}
+
+fn redact_with(s: &str, home: &str) -> String {
+    let home = home.trim_end_matches(['\\', '/']);
+    // 太短（如 "C:" 或 "/"）会误伤整段文本，不处理。
+    if home.len() < 4 {
+        return s.to_string();
+    }
+    s.replace(&home.replace('\\', "\\\\"), "~").replace(home, "~")
+}
+
+#[cfg(test)]
+mod redact_tests {
+    use super::redact_with;
+
+    #[test]
+    fn replaces_plain_and_debug_escaped_home() {
+        assert_eq!(
+            redact_with(r"exe=C:\Users\bob\AppData\x.exe", r"C:\Users\bob"),
+            r"exe=~\AppData\x.exe"
+        );
+        assert_eq!(
+            redact_with(r#"exe=Some("C:\\Users\\bob\\AppData")"#, r"C:\Users\bob"),
+            r#"exe=Some("~\\AppData")"#
+        );
+    }
+
+    #[test]
+    fn leaves_other_text_and_short_homes_alone() {
+        assert_eq!(redact_with("exe=F:\\tools\\a.exe", r"C:\Users\bob"), "exe=F:\\tools\\a.exe");
+        assert_eq!(redact_with("anything /usr", "/"), "anything /usr");
+    }
 }
 
 /// WebView2 相关环境变量（在运行时配置完成之后调用）。

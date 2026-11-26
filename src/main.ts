@@ -146,6 +146,7 @@ let spriteReq = 0;
 let leftDown = false;
 let lastOverCat = false;
 let overCatLogs = 0;
+let dragSeq = 0;
 let manualDrag: { sx: number; sy: number; wx: number; wy: number; lx: number; ly: number; raf: number } | null = null;
 
 function endManualDrag(reason: string): void {
@@ -164,7 +165,7 @@ async function beginManualDrag(sx: number, sy: number): Promise<void> {
   try {
     const p = await getCurrentWindow().outerPosition();
     manualDrag = { sx, sy, wx: p.x, wy: p.y, lx: sx, ly: sy, raf: 0 };
-    logEvent('info', 'drag', `manual drag started at window (${p.x},${p.y})`);
+    logEvent('info', 'drag', 'manual drag started');
   } catch (err) {
     logEvent('error', 'drag', `manual drag could not read window position: ${String(err)}`);
     canvas.classList.remove('pet-dragging');
@@ -913,9 +914,28 @@ async function bootstrap(): Promise<void> {
         logEvent('info', 'drag', 'mousedown ignored: click-through is locked');
         return;
       }
-      logEvent('info', 'drag', `mousedown: over_cat=${lastOverCat} screen=(${e.screenX},${e.screenY}) dpr=${window.devicePixelRatio}`);
+      dragSeq += 1;
+      // 只记前 40 次按下（不含屏幕坐标）；之后的拖动由后端汇总，异常才会写日志。
+      if (dragSeq <= 40) {
+        logEvent('info', 'drag', `mousedown #${dragSeq}: over_cat=${lastOverCat} dpr=${window.devicePixelRatio}`);
+      }
       leftDown = true;
       canvas.classList.add('pet-dragging');
+      // Windows 普通窗口：由后端按系统光标位置移动窗口，松开后才返回（不依赖 tao 的原生拖动，见 cursor_drag.rs）。
+      // 不支持的平台/模式返回 false，走下面原有的原生拖动 + 手动拖动兜底。
+      try {
+        const handled = await invoke<boolean>('drag_window_by_cursor', {
+          downAtMs: performance.timeOrigin + e.timeStamp,
+        });
+        if (handled) {
+          leftDown = false;
+          canvas.classList.remove('pet-dragging');
+          engine.onMouseUp('left');
+          return;
+        }
+      } catch (err) {
+        logEvent('warn', 'drag', `drag_window_by_cursor failed, using legacy drag: ${String(err)}`);
+      }
       void invoke('set_dragging', { dragging: true });
       const t0 = performance.now();
       let nativeFailed = false;

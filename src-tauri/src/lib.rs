@@ -3,6 +3,8 @@
 mod applog;
 mod cats;
 mod config;
+#[cfg(windows)]
+mod cursor_drag;
 mod input_hook;
 #[cfg(target_os = "macos")]
 mod macos_window;
@@ -563,8 +565,53 @@ fn set_menu_open(state: State<'_, AppState>, open: bool) {
 
 #[tauri::command]
 fn set_dragging(state: State<'_, AppState>, dragging: bool) {
-    applog::info("drag", &format!("set_dragging({dragging})"));
+    // 只在旧的（非 Windows / Win7 分层）拖动路径里使用；不再逐次写日志，拖动细节由 `cursor_drag` 汇总记录。
     state.dragging.store(dragging, Ordering::Relaxed);
+}
+
+/// Windows 普通窗口：由后端按系统光标位置移动猫窗口，直到松开鼠标才返回。
+/// 返回 `true` 表示已处理（前端不要再走旧拖动）；`false` 表示本平台/模式不支持，前端走旧路径。
+/// 原因见 `cursor_drag.rs`：tao 的 `start_dragging` 内部标志可能卡在 true，之后原生拖动全部失效。
+#[tauri::command]
+async fn drag_window_by_cursor(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    down_at_ms: Option<f64>,
+) -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        if win_needs_win7_ulw() {
+            return Ok(false);
+        }
+        let Some(win) = app.get_webview_window("main") else {
+            return Ok(false);
+        };
+        let hwnd = win.hwnd().map_err(|e| e.to_string())?.0 as isize;
+        let ipc_delay_ms = down_at_ms.map(|t| {
+            let now = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_millis() as f64)
+                .unwrap_or(0.0);
+            (now - t).max(0.0).round() as i64
+        });
+        let ctx = cursor_drag::Context {
+            ipc_delay_ms,
+            click_through: win_is_click_through(&win),
+            menu_open: state.menu_open.load(Ordering::Relaxed),
+        };
+        let dragging = state.dragging.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            cursor_drag::run(&app, hwnd, dragging, ctx);
+        })
+        .await
+        .map_err(|e| format!("拖动任务异常: {e}"))?;
+        Ok(true)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (&app, &state, down_at_ms);
+        Ok(false)
+    }
 }
 
 /// 前端（猫窗口、设置、制作器、菜单）把诊断信息写进同一份日志。
@@ -1627,18 +1674,17 @@ fn start_hit_test_loop(
     });
 }
 
-/// 记录「窗口是否穿透鼠标」的切换（只记前 300 次，避免日志被刷满）。排查"点不到猫/拖不动"时最有用。
+/// 记录「窗口是否穿透鼠标」的切换：前 100 次全记；之后只记拖动/菜单期间的切换，其余每 50 次记一条。
+/// （原来记满 300 次就停，"用了一阵之后才出问题"时恰好没有日志。）排查"点不到猫/拖不动"时最有用。
 fn log_ignore_toggle(should_ignore: bool, over_cat: bool, dragging: bool, menu: bool, locked: bool) {
     use std::sync::atomic::{AtomicU32, Ordering};
     static N: AtomicU32 = AtomicU32::new(0);
     let n = N.fetch_add(1, Ordering::Relaxed);
-    if n < 300 {
+    if n < 100 || dragging || menu || n % 50 == 0 {
         applog::info(
             "cursor",
-            &format!("click-through -> {should_ignore} (over_cat={over_cat}, dragging={dragging}, menu={menu}, locked={locked})"),
+            &format!("click-through -> {should_ignore} (n={n}, over_cat={over_cat}, dragging={dragging}, menu={menu}, locked={locked})"),
         );
-    } else if n == 300 {
-        applog::info("cursor", "(further click-through toggles are not logged)");
     }
 }
 
@@ -2128,6 +2174,7 @@ pub fn run() {
             preview_scale,
             set_menu_open,
             set_dragging,
+            drag_window_by_cursor,
             log_event,
             set_update_banner_open,
             is_win7_ulw_mode,
